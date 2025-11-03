@@ -1,175 +1,166 @@
 {{-- resources/views/kk/index.blade.php --}}
 @extends('layouts.app')
 
+@section('title', 'Daftar Kepala Keluarga')
+
 @section('content')
-<div class="container mx-auto px-4 py-6">
-  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-    <h2 class="text-2xl font-bold">Daftar Kepala Keluarga</h2>
+<div class="max-w-6xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-6">Daftar Kepala Keluarga</h1>
 
-    <div class="flex items-center gap-3 w-full md:w-auto">
-      <!-- Live search input -->
-      <input id="kk-search" type="search"
-             placeholder="Cari NIK atau Nama..."
-             value="{{ $q ?? '' }}"
-             class="w-full md:w-80 border rounded-l px-3 py-2 focus:outline-none focus:ring"
-             autocomplete="off" />
+  <div class="space-y-4">
+    @foreach($kepala_keluarga as $kk)
+      <div class="bg-white rounded shadow-sm border p-4 relative">
+        <div class="grid grid-cols-12 gap-4 items-start">
+          <div class="col-span-3">
+            <div class="text-xs text-gray-500">NIK</div>
+            <div class="font-semibold text-sm break-words">{{ $kk->nik }}</div>
+            <a href="javascript:void(0)" 
+               class="toggle-anggota text-xs text-blue-600 hover:underline mt-2 inline-block"
+               data-url="{{ route('kk.anggota', $kk->id) }}"
+               data-count="{{ $kk->anggotas->count() ?? 0 }}">
+               Tampilkan Anggota ({{ $kk->anggotas->count() ?? 0 }})
+            </a>
+          </div>
 
-      <!-- fallback button (non-js) -->
-      <button id="kk-search-btn" type="button" class="bg-blue-600 text-white px-4 rounded-r ml-1 hidden md:inline-block">Cari</button>
+          <div class="col-span-6">
+            <div class="text-xs text-gray-500">Nama</div>
+            <div class="font-semibold text-sm">{{ strtoupper($kk->nama) }}</div>
+            <div class="text-xs text-gray-400 mt-2">RT / RW</div>
+            <div class="text-sm">{{ $kk->rt }} / {{ $kk->rw }}</div>
+          </div>
 
-      <a href="{{ route('kk.create') }}" class="ml-3 inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-        </svg>
-        Tambah Data
-      </a>
-    </div>
+          <div class="col-span-3 text-right">
+            <a href="{{ route('kk.show', $kk->id) }}" class="inline-block px-3 py-1 border rounded text-sm mr-2">Detail</a>
+            <a href="{{ route('kk.edit', $kk->id) }}" class="inline-block px-3 py-1 border rounded text-sm">Edit</a>
+          </div>
+        </div>
+
+        {{-- Container untuk menampilkan anggota (hidden default) --}}
+        <div class="anggota-wrapper mt-4 overflow-hidden transition-all duration-300" style="max-height: 0;">
+          <div class="anggota-content space-y-3"></div>
+        </div>
+      </div>
+    @endforeach
   </div>
 
-  {{-- container for ajax-updated list (single source) --}}
-  <div id="kk-list">
-    @include('kk._list', ['kks' => $kks])
+  {{-- pagination --}}
+  <div class="mt-6">
+    {{ $kepala_keluarga->links() }}
   </div>
 </div>
 
-{{-- ensure Alpine available --}}
-<script>
-  (function(){
-    if (!window.Alpine) {
-      var s = document.createElement('script');
-      s.src = "https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js";
-      s.defer = true;
-      document.head.appendChild(s);
-    }
-  })();
-</script>
+@push('styles')
+<style>
+.anggota-card {
+  border: 2px solid rgba(0,0,0,0.6);
+  border-radius: 6px;
+  padding: 12px;
+  animation: fadeInUp 300ms ease both;
+  background: white;
+}
+@keyframes fadeInUp {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+</style>
+@endpush
 
-{{-- Robust live-search + pagination handler (full) --}}
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  const input = document.getElementById('kk-search');
-  const listContainer = document.getElementById('kk-list');
-  let debounceTimer = null;
+  document.querySelectorAll('.toggle-anggota').forEach(btn => {
+    btn.addEventListener('click', async function (e) {
+      const url = this.dataset.url;
+      const wrapper = this.closest('.bg-white').querySelector('.anggota-wrapper');
+      const content = wrapper.querySelector('.anggota-content');
 
-  function debounce(fn, wait) {
-    return function(...args) {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => fn.apply(this, args), wait);
-    };
-  }
-
-  // fetchList: flexible — handles JSON { html } OR full HTML page
-  async function fetchList(url, pushHistory = false) {
-    try {
-      const fullUrl = new URL(url, location.origin).toString();
-      const res = await fetch(fullUrl, {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'same-origin'
-      });
-
-      if (!res.ok) throw new Error('Network response was not ok');
-
-      const contentType = res.headers.get('content-type') || '';
-
-      // 1) If JSON, parse and inject html field
-      if (contentType.includes('application/json')) {
-        const data = await res.json();
-        listContainer.innerHTML = data.html;
-      } else {
-        // 2) If HTML returned (e.g. whole page), parse and extract #kk-list fragment
-        const text = await res.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const fragment = doc.getElementById('kk-list');
-        if (fragment) {
-          listContainer.innerHTML = fragment.innerHTML;
-        } else {
-          // fallback: replace whole container with returned text (last resort)
-          listContainer.innerHTML = text;
-        }
-      }
-
-      // Reattach handlers for the fresh DOM
-      attachPaginationHandlers();
-
-      if (pushHistory) {
-        history.pushState(null, '', fullUrl);
-      }
-    } catch (err) {
-      console.error('Fetch error:', err);
-    }
-  }
-
-  const onType = debounce(function(e){
-    const qraw = e.target.value || '';
-    const q = encodeURIComponent(qraw);
-    const url = `${location.pathname}?q=${q}`;
-    history.replaceState(null, '', url);
-    fetchList(url);
-  }, 300);
-
-  input.addEventListener('input', onType);
-
-  // fallback non-js button behaviour
-  const searchBtn = document.getElementById('kk-search-btn');
-  if (searchBtn) {
-    searchBtn.addEventListener('click', function(){
-      const q = encodeURIComponent(input.value || '');
-      window.location.href = `${location.pathname}?q=${q}`;
-    });
-  }
-
-  // Only intercept pagination links that point to the SAME index path (avoid detail/edit)
-  function attachPaginationHandlers() {
-    const links = listContainer.querySelectorAll('a[href]');
-    links.forEach(link => {
-      const href = link.getAttribute('href');
-      if (!href) return;
-
-      // Normalize and parse
-      let urlObj;
-      try {
-        urlObj = new URL(href, location.origin);
-      } catch(e) {
+      if (wrapper.classList.contains('open')) {
+        wrapper.style.maxHeight = '0px';
+        wrapper.classList.remove('open');
         return;
       }
 
-      // Only intercept links that target the same pathname as current index (e.g. /kk)
-      if (urlObj.pathname !== location.pathname) return;
+      if (content.dataset.filled === '1') {
+        wrapper.classList.add('open');
+        wrapper.style.maxHeight = wrapper.scrollHeight + 'px';
+        return;
+      }
 
-      // This is likely a pagination or filtered-page link -> intercept
-      // Replace existing node to avoid duplicate listeners
-      const newLink = link.cloneNode(true);
-      link.parentNode.replaceChild(newLink, link);
+      const oldText = this.innerHTML;
+      this.innerHTML = 'Memuat...';
 
-      newLink.addEventListener('click', function(ev) {
-        // allow open-in-new-tab
-        if (ev.ctrlKey || ev.metaKey || ev.button !== 0) return;
+      try {
+        const res = await fetch(url, {
+          headers: { 'Accept': 'application/json' }
+        });
 
-        ev.preventDefault();
+        if (!res.ok) throw new Error('Network response was not ok');
 
-        // sync input with q param if present
-        const params = urlObj.searchParams;
-        const q = params.get('q') || '';
-        input.value = q;
+        const json = await res.json();
+        if (!json.success) throw new Error('Response tidak berisi data');
 
-        fetchList(urlObj.toString(), true);
-      });
+        const anggota = json.data || [];
+
+        content.innerHTML = '';
+
+        if (anggota.length === 0) {
+          content.innerHTML = '<div class="text-sm text-gray-500">Belum ada data anggota.</div>';
+        } else {
+          anggota.forEach(a => {
+            const nama = (a.nama || '—').toUpperCase();
+            const nik = a.nik || '-';
+            const status = a.status_keluarga || (a.status || '-');
+            const tempat = a.tempat_lahir || '-';
+            const tanggal = a.tanggal_lahir || '-';
+
+            const html = `
+              <div class="anggota-card">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <div class="font-bold text-md">${escapeHtml(nama)}</div>
+                    <div class="text-xs text-gray-600">NIK: ${escapeHtml(nik)}</div>
+                  </div>
+                  <div class="text-right text-xs text-gray-500">
+                    <div>${escapeHtml(status)}</div>
+                  </div>
+                </div>
+                <div class="mt-2 text-sm text-gray-600">
+                  <div>Tempat Lahir: ${escapeHtml(tempat)}</div>
+                  <div>Tanggal Lahir: ${escapeHtml(tanggal)}</div>
+                </div>
+              </div>
+            `;
+            content.insertAdjacentHTML('beforeend', html);
+          });
+        }
+
+        content.dataset.filled = '1';
+
+        wrapper.classList.add('open');
+        requestAnimationFrame(() => {
+          wrapper.style.maxHeight = wrapper.scrollHeight + 'px';
+        });
+
+      } catch (err) {
+        console.error(err);
+        alert('Gagal memuat anggota: ' + err.message);
+      } finally {
+        this.innerHTML = oldText;
+      }
     });
-  }
-
-  // browser navigation back/forward
-  window.addEventListener('popstate', function(){
-    const params = new URL(location.href).searchParams;
-    const q = params.get('q') || '';
-    input.value = q;
-    fetchList(location.href, false);
   });
 
-  // initial attach
-  attachPaginationHandlers();
+  function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 });
 </script>
 @endpush
+
 @endsection

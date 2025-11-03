@@ -12,41 +12,65 @@ use Illuminate\Support\Facades\Log;
 class KepalaKeluargaController extends Controller
 {
     /**
-     * Listing dengan cursor pagination
+     * Listing dengan pagination (index)
      */
-public function index(Request $request)
-{
-    $q = $request->query('q');
+    public function index(Request $request)
+    {
+        $q = $request->query('q');
 
-    $selectCols = ['id','nik','nama','desa_id','rt','rw','created_at'];
+        $selectCols = ['id','nik','nama','desa_id','rt','rw','created_at'];
 
-    $query = KepalaKeluarga::select($selectCols)
-        ->with(['anggotas:id,kepala_keluarga_id,nama,jenis_kelamin,tanggal_lahir,status_keluarga,nik'])
-        ->orderBy('id', 'desc');
+        $query = KepalaKeluarga::select($selectCols)
+            // eager load anggota minimal fields, relasi dinamai "anggotas"
+            ->with(['anggotas:id,kepala_keluarga_id,nama,jenis_kelamin,tanggal_lahir,status_keluarga,nik'])
+            ->orderBy('id', 'desc');
 
-    if ($q) {
-        $query->where(function($sub) use ($q) {
-            $sub->where('nama', 'like', '%'.$q.'%')
-                ->orWhere('nik', 'like', '%'.$q.'%');
-        });
+        if ($q) {
+            $query->where(function($sub) use ($q) {
+                $sub->where('nama', 'like', '%'.$q.'%')
+                    ->orWhere('nik', 'like', '%'.$q.'%');
+            });
+        }
+
+        // gunakan paginate biasa supaya links() bekerja
+        $kepala_keluarga = $query->paginate(15)->withQueryString();
+
+        // jika AJAX ingin partial html (opsional)
+        $isAjax = $request->ajax() || $request->wantsJson() || $request->header('X-Requested-With') === 'XMLHttpRequest';
+
+        if ($isAjax) {
+            // jika kamu punya partial view _list, pastikan menerima $kepala_keluarga
+            if (view()->exists('kk._list')) {
+                $html = view('kk._list', compact('kepala_keluarga'))->render();
+                return response()->json(['html' => $html]);
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $kepala_keluarga->items(),
+                'pagination' => [
+                    'total' => $kepala_keluarga->total(),
+                    'per_page' => $kepala_keluarga->perPage(),
+                    'current_page' => $kepala_keluarga->currentPage(),
+                ]
+            ]);
+        }
+
+        return view('kk.index', compact('kepala_keluarga', 'q'));
     }
 
-    // Gunakan paginate sederhana yang kompatibel untuk pagination link (atau cursorPaginate jika sudah pakai)
-    $kks = $query->paginate(15)->withQueryString();
+    /**
+     * Return anggota keluarga as JSON untuk AJAX.
+     * Pastikan relasi model adalah `anggotas`.
+     */
+    public function anggotaJson($id)
+    {
+        $kk = KepalaKeluarga::with(['anggotas'])->findOrFail($id);
 
-    // Jika request AJAX (XHR) -> kembalikan partial HTML sebagai JSON.html
-    // Kita deteksi beberapa cara: ajax() or wantsJson() or header X-Requested-With
-    $isAjax = $request->ajax() || $request->wantsJson() || $request->header('X-Requested-With') === 'XMLHttpRequest';
-
-    if ($isAjax) {
-        $html = view('kk._list', compact('kks'))->render();
-        return response()->json(['html' => $html]);
+        return response()->json([
+            'success' => true,
+            'data' => $kk->anggotas, // koleksi anggota
+        ]);
     }
-
-    // normal page
-    return view('kk.index', compact('kks','q'));
-}
-
 
     /**
      * Show create form
@@ -67,8 +91,8 @@ public function index(Request $request)
             'phone' => 'nullable|string|max:50',
             'alamat' => 'nullable|string',
             'desa_id' => 'nullable|exists:desas,id',
-            'rt' => 'nullable|string|max:10',   // <-- ADDED
-            'rw' => 'nullable|string|max:10',   // <-- ADDED
+            'rt' => 'nullable|string|max:10',
+            'rw' => 'nullable|string|max:10',
             'anggota' => 'nullable|array',
             'anggota.*.nama' => 'required_with:anggota|string|max:191',
             'anggota.*.nik' => 'nullable|string|max:32',
@@ -145,8 +169,8 @@ public function index(Request $request)
             'phone' => 'nullable|string|max:50',
             'alamat' => 'nullable|string',
             'desa_id' => 'nullable|exists:desas,id',
-            'rt' => 'nullable|string|max:10',   // <-- ADDED
-            'rw' => 'nullable|string|max:10',   // <-- ADDED
+            'rt' => 'nullable|string|max:10',
+            'rw' => 'nullable|string|max:10',
             'anggota' => 'nullable|array',
             'anggota.*.nama' => 'required_with:anggota|string|max:191',
             'anggota.*.nik' => 'nullable|string|max:32',
