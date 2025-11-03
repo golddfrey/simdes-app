@@ -8,48 +8,88 @@ use App\Models\KepalaKeluarga;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Carbon;
 
 class KepalaKeluargaController extends Controller
 {
     /**
-     * Listing dengan cursor pagination
+     * Listing dengan pagination (dengan support AJAX partial)
+     *
+     * - Mengambil relasi anggotas dengan kolom tertentu agar ringan.
+     * - Jika AJAX (XHR) maka kembalikan partial HTML sebagai JSON.html
+     * - Pastikan field tanggal menjadi Carbon agar view ->format() aman.
      */
-public function index(Request $request)
-{
-    $q = $request->query('q');
+    public function index(Request $request)
+    {
+        $q = $request->query('q');
 
-    $selectCols = ['id','nik','nama','desa_id','rt','rw','created_at'];
+        // kolom yang ingin kita ambil (ringkas untuk performa)
+        $selectCols = ['id','nik','nama','desa_id','rt','rw','created_at'];
 
-    $query = KepalaKeluarga::select($selectCols)
-        ->with(['anggotas:id,kepala_keluarga_id,nama,jenis_kelamin,tanggal_lahir,status_keluarga,nik'])
-        ->orderBy('id', 'desc');
+        $query = KepalaKeluarga::select($selectCols)
+            // eager load anggota tapi pilih kolom penting supaya ringan
+            ->with(['anggotas:id,kepala_keluarga_id,nama,jenis_kelamin,tanggal_lahir,status_keluarga,nik'])
+            ->orderBy('id', 'desc');
 
-    if ($q) {
-        $query->where(function($sub) use ($q) {
-            $sub->where('nama', 'like', '%'.$q.'%')
-                ->orWhere('nik', 'like', '%'.$q.'%');
+        if ($q) {
+            $query->where(function($sub) use ($q) {
+                $sub->where('nama', 'like', '%'.$q.'%')
+                    ->orWhere('nik', 'like', '%'.$q.'%');
+            });
+        }
+
+        // paginate biasa (15 per halaman)
+        $kks = $query->paginate(15)->withQueryString();
+
+        // --- PENTING: pastikan atribut tanggal pada model menjadi Carbon
+        // Karena kadang attribute bisa berupa string (tergantung driver / select),
+        // kita force-parse agar view aman saat memakai ->format()
+        $kks->getCollection()->transform(function ($kk) {
+            // created_at
+            if (isset($kk->created_at) && ! ($kk->created_at instanceof Carbon)) {
+                try {
+                    $kk->created_at = Carbon::parse($kk->created_at);
+                } catch (\Throwable $e) {
+                    // kalau parsing gagal, biarkan stringnya agar tidak crash
+                    Log::warning("Gagal parse created_at untuk KK id {$kk->id}: ".$e->getMessage());
+                }
+            }
+
+            // anggota: parse tanggal_lahir masing-masing anggota (jika ada)
+            if ($kk->relationLoaded('anggotas')) {
+                $kk->anggotas->transform(function ($a) {
+                    if (isset($a->tanggal_lahir) && $a->tanggal_lahir !== null && ! ($a->tanggal_lahir instanceof Carbon)) {
+                        try {
+                            $a->tanggal_lahir = Carbon::parse($a->tanggal_lahir);
+                        } catch (\Throwable $e) {
+                            Log::warning("Gagal parse tanggal_lahir anggota id {$a->id}: ".$e->getMessage());
+                        }
+                    }
+                    return $a;
+                });
+            }
+
+            return $kk;
         });
+
+        // cek apakah request AJAX (XHR) — kita tangani beberapa kemungkinan
+        $isAjax = $request->ajax() ||
+                  $request->wantsJson() ||
+                  strtolower($request->header('X-Requested-With') ?? '') === 'xmlhttprequest';
+
+        if ($isAjax) {
+            // render partial list view (pastikan ada file resources/views/kk/_list.blade.php)
+            $html = view('kk._list', compact('kks'))->render();
+            return response()->json(['html' => $html]);
+        }
+
+        // normal page render
+        return view('kk.index', compact('kks','q'));
     }
-
-    // Gunakan paginate sederhana yang kompatibel untuk pagination link (atau cursorPaginate jika sudah pakai)
-    $kks = $query->paginate(15)->withQueryString();
-
-    // Jika request AJAX (XHR) -> kembalikan partial HTML sebagai JSON.html
-    // Kita deteksi beberapa cara: ajax() or wantsJson() or header X-Requested-With
-    $isAjax = $request->ajax() || $request->wantsJson() || $request->header('X-Requested-With') === 'XMLHttpRequest';
-
-    if ($isAjax) {
-        $html = view('kk._list', compact('kks'))->render();
-        return response()->json(['html' => $html]);
-    }
-
-    // normal page
-    return view('kk.index', compact('kks','q'));
-}
 
 
     /**
-     * Show create form
+     * Tampilkan form create
      */
     public function create()
     {
@@ -57,7 +97,7 @@ public function index(Request $request)
     }
 
     /**
-     * Store new Kepala Keluarga
+     * Simpan KK baru + anggota
      */
     public function store(Request $request)
     {
@@ -67,8 +107,8 @@ public function index(Request $request)
             'phone' => 'nullable|string|max:50',
             'alamat' => 'nullable|string',
             'desa_id' => 'nullable|exists:desas,id',
-            'rt' => 'nullable|string|max:10',   // <-- ADDED
-            'rw' => 'nullable|string|max:10',   // <-- ADDED
+            'rt' => 'nullable|string|max:10',
+            'rw' => 'nullable|string|max:10',
             'anggota' => 'nullable|array',
             'anggota.*.nama' => 'required_with:anggota|string|max:191',
             'anggota.*.nik' => 'nullable|string|max:32',
@@ -109,11 +149,23 @@ public function index(Request $request)
     }
 
     /**
-     * Show single KK
+     * Tampilkan detail KK
      */
     public function show($id)
     {
         $kk = KepalaKeluarga::with('anggotas')->findOrFail($id);
+
+        // Pastikan tanggal anggota juga Carbon di view detail
+        $kk->anggotas->transform(function ($a) {
+            if (isset($a->tanggal_lahir) && ! ($a->tanggal_lahir instanceof Carbon)) {
+                try {
+                    $a->tanggal_lahir = Carbon::parse($a->tanggal_lahir);
+                } catch (\Throwable $e) {
+                    Log::warning("Gagal parse tanggal_lahir anggota id {$a->id}: ".$e->getMessage());
+                }
+            }
+            return $a;
+        });
 
         return view('kk.show', compact('kk'));
     }
@@ -133,7 +185,7 @@ public function index(Request $request)
     }
 
     /**
-     * Update KK dan anggota (simple replace strategy)
+     * Update KK (replace anggota)
      */
     public function update(Request $request, $id)
     {
@@ -145,8 +197,8 @@ public function index(Request $request)
             'phone' => 'nullable|string|max:50',
             'alamat' => 'nullable|string',
             'desa_id' => 'nullable|exists:desas,id',
-            'rt' => 'nullable|string|max:10',   // <-- ADDED
-            'rw' => 'nullable|string|max:10',   // <-- ADDED
+            'rt' => 'nullable|string|max:10',
+            'rw' => 'nullable|string|max:10',
             'anggota' => 'nullable|array',
             'anggota.*.nama' => 'required_with:anggota|string|max:191',
             'anggota.*.nik' => 'nullable|string|max:32',
@@ -198,7 +250,7 @@ public function index(Request $request)
     }
 
     /**
-     * Delete KK (optional)
+     * Hapus KK (opsional)
      */
     public function destroy($id)
     {
