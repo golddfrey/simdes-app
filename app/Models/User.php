@@ -8,19 +8,8 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
-
-/**
- * App\Models\User
- *
- * Fields of interest:
- * - id
- * - name
- * - email
- * - password
- * - role ('admin' | 'kepala_keluarga')
- * - kepala_keluarga_id (nullable) -> links to kepala_keluargas table if present
- * - meta (json)
- */
+use App\Models\KepalaKeluarga;
+use App\Models\Anggota;
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
@@ -88,26 +77,6 @@ class User extends Authenticatable
     }
 
     /**
-     * Convenience: is admin?
-     *
-     * @return bool
-     */
-    public function isAdmin(): bool
-    {
-        return $this->role === 'admin';
-    }
-
-    /**
-     * Convenience: is kepala keluarga?
-     *
-     * @return bool
-     */
-    public function isKepalaKeluarga(): bool
-    {
-        return $this->role === 'kepala_keluarga';
-    }
-
-    /**
      * Helper: does this user "own" the provided anggota?
      * We define ownership as anggota.kepala_keluarga_id === user's kepala_keluarga_id.
      *
@@ -140,4 +109,13 @@ class User extends Authenticatable
     {
         return $this->isAdmin();
     }
+    public function isAdmin(): bool
+{
+    return $this->role === 'admin';
+}
+
+public function isKepalaKeluarga(): bool
+{
+    return $this->role === 'kepala_keluarga';
+}
 }

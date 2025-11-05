@@ -6,111 +6,108 @@ use App\Models\User;
 use App\Models\KepalaKeluarga;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 
 class AuthController extends Controller
 {
-    /**
-     * AuthController constructor.
-     * Guests may access login & register pages; authenticated users can logout.
-     */
     public function __construct()
     {
-        $this->middleware('guest')->only(['showLogin', 'login', 'showRegister', 'register']);
+        $this->middleware('guest')->only([
+            'showAdminLogin', 'adminLogin',
+            'showKkLogin', 'kkLogin',
+        ]);
+
         $this->middleware('auth')->only(['logout']);
     }
 
-    /**
-     * Show login page (blade). If you prefer API-only, skip views and return JSON.
-     *
-     * @return \Illuminate\View\View
-     */
-    public function showLogin()
+    /* =========================
+     * ADMIN LOGIN (EMAIL)
+     * ========================= */
+    public function showAdminLogin()
     {
-        return view('auth.login');
+        return view('auth.login-admin');
     }
 
-    /**
-     * Handle login form POST.
-     *
-     * @param Request $request
-     * @return \Illuminate\Http\RedirectResponse
-     */
-    public function login(Request $request)
+    public function adminLogin(Request $request)
     {
         $credentials = $request->validate([
-            'email' => ['required','email'],
-            'password' => ['required','string'],
+            'email'    => ['required', 'email'],
+            'password' => ['required', 'string'],
         ]);
 
-        // Attempt login
-        if (Auth::attempt($credentials, $request->boolean('remember'))) {
+        // force role=admin
+        $remember = $request->boolean('remember');
+
+        if (Auth::attempt([
+            'email' => $credentials['email'],
+            'password' => $credentials['password'],
+            'role' => 'admin',
+        ], $remember)) {
             $request->session()->regenerate();
-            return redirect()->intended(route('home'))->with('success', 'Berhasil login.');
+            return redirect()->intended(route('admin.dashboard'))
+                ->with('success', 'Berhasil login sebagai Admin.');
         }
 
-        return back()->withInput($request->only('email'))->withErrors([
-            'email' => 'Email atau password salah.',
-        ]);
+        return back()->withInput($request->only('email'))
+            ->withErrors(['email' => 'Email / password tidak valid atau bukan admin.']);
     }
 
-    /**
-     * Show register page for kepala keluarga.
-     * This route is public in this implementation; if you prefer admin-only creation, skip this.
-     *
-     * @return \Illuminate\View\View
-     */
-    public function showRegister()
+    /* =========================
+     * KEPALA KELUARGA LOGIN (NIK)
+     * ========================= */
+    public function showKkLogin()
     {
-        return view('auth.register');
+        return view('auth.login-kk');
     }
 
-    /**
-     * Handle registration of kepala_keluarga user.
-     * This creates a User with role 'kepala_keluarga'. If you already have a kepala_keluarga record
-     * and want to link it, pass kepala_keluarga_id in the request (optional).
-     *
-     * @param Request $request
-     * @return \Illuminate\Http\RedirectResponse
-     */
-    public function register(Request $request)
+    public function kkLogin(Request $request)
     {
         $data = $request->validate([
-            'name' => ['required','string','max:255'],
-            'email' => ['required','email','max:255', Rule::unique('users','email')],
-            'password' => ['required','string','min:6','confirmed'],
-            'kepala_keluarga_id' => ['nullable','integer','exists:kepala_keluargas,id'],
+            'nik'      => ['required', 'string'],
+            'password' => ['required', 'string'],
         ]);
 
-        $user = User::create([
-            'name' => $data['name'],
-            'email' => $data['email'],
-            'password' => $data['password'], // mutator in model will hash
-            'role' => 'kepala_keluarga',
-            'kepala_keluarga_id' => $data['kepala_keluarga_id'] ?? null,
-        ]);
+        // Cari KK berdasarkan NIK
+        $kk = KepalaKeluarga::where('nik', $data['nik'])->first();
 
-        // Auto-login after register (optional)
-        Auth::login($user);
+        if (!$kk) {
+            return back()->withInput($request->only('nik'))
+                ->withErrors(['nik' => 'NIK tidak ditemukan.']);
+        }
+
+        // Cari user yang terhubung dengan KK tsb & berperan kepala_keluarga
+        $user = User::where('role', 'kepala_keluarga')
+            ->where('kepala_keluarga_id', $kk->id)
+            ->first();
+
+        if (!$user) {
+            return back()->withInput($request->only('nik'))
+                ->withErrors(['nik' => 'Akun untuk NIK tersebut belum dibuat oleh petugas.']);
+        }
+
+        // Verifikasi password manual (karena kita tidak login via email)
+        if (!Hash::check($data['password'], $user->password)) {
+            return back()->withInput($request->only('nik'))
+                ->withErrors(['password' => 'Kata sandi salah.']);
+        }
+
+        Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
 
-        return redirect()->route('home')->with('success', 'Akun kepala keluarga berhasil dibuat.');
+        return redirect()->intended(route('kk.dashboard'))
+            ->with('success', 'Berhasil login sebagai Kepala Keluarga.');
     }
 
-    /**
-     * Logout user.
-     *
-     * @param Request $request
-     * @return \Illuminate\Http\RedirectResponse
-     */
+    /* =========================
+     * LOGOUT
+     * ========================= */
     public function logout(Request $request)
     {
         Auth::logout();
-
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return redirect()->route('login')->with('success', 'Anda berhasil logout.');
+        return redirect()->route('home')->with('success', 'Anda berhasil logout.');
     }
 }

@@ -3,20 +3,19 @@
 namespace App\Http;
 
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
+use App\Http\Middleware\TrustProxies;
 
 class Kernel extends HttpKernel
 {
     /**
-     * The application's global HTTP middleware stack.
+     * Global HTTP middleware yang dijalankan untuk setiap request.
      *
-     * These middleware are run during every request to your application.
-     *
-     * @var array<int, class-string|string>
+     * Urutan penting. Pastikan class-nya ada semua di app/Http/Middleware
+     * atau dari framework.
      */
     protected $middleware = [
-        // \App\Http\Middleware\TrustHosts::class,
         \App\Http\Middleware\TrustProxies::class,
-        \Fruitcake\Cors\HandleCors::class,
+        \Illuminate\Http\Middleware\HandleCors::class, // ✅ ganti dari Fruitcake ke Illuminate
         \App\Http\Middleware\PreventRequestsDuringMaintenance::class,
         \Illuminate\Foundation\Http\Middleware\ValidatePostSize::class,
         \App\Http\Middleware\TrimStrings::class,
@@ -24,9 +23,7 @@ class Kernel extends HttpKernel
     ];
 
     /**
-     * The application's route middleware groups.
-     *
-     * @var array<string, array<int, class-string|string>>
+     * Middleware groups.
      */
     protected $middlewareGroups = [
         'web' => [
@@ -40,18 +37,13 @@ class Kernel extends HttpKernel
         ],
 
         'api' => [
-            // throttle:api applies rate limiting defined in your RouteServiceProvider
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
     ];
 
     /**
-     * The application's route middleware.
-     *
-     * These middleware may be assigned to routes or used within controllers.
-     *
-     * @var array<string, class-string|string>
+     * Route middleware (alias).
      */
     protected $routeMiddleware = [
         'auth' => \App\Http\Middleware\Authenticate::class,
@@ -64,7 +56,7 @@ class Kernel extends HttpKernel
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
 
-        // Custom alias: simple role middleware
+        // custom
         'role' => \App\Http\Middleware\RoleMiddleware::class,
     ];
 }
